@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
-from gtts import gTTS
+import edge_tts
+import asyncio
 import os
 import uuid
 
@@ -10,12 +11,18 @@ CORS(app)
 AUDIO_FOLDER = "audio"
 os.makedirs(AUDIO_FOLDER, exist_ok=True)
 
+VOICES = {
+    "female": "hi-IN-SwaraNeural",
+    "male": "hi-IN-MadhurNeural"
+}
+
 
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({
         "success": True,
-        "message": "Text to Voice API is running"
+        "message": "Text to Voice API is running",
+        "voices": ["female", "male"]
     })
 
 
@@ -31,7 +38,7 @@ def text_to_speech():
         }), 400
 
     text = str(data.get("text", "")).strip()
-    language = str(data.get("language", "hi")).strip()
+    voice_type = str(data.get("voice", "female")).lower().strip()
 
     if not text:
         return jsonify({
@@ -39,32 +46,30 @@ def text_to_speech():
             "error": "Text is required"
         }), 400
 
-    # Prevent excessively large requests
     if len(text) > 5000:
         return jsonify({
             "success": False,
             "error": "Maximum 5000 characters allowed"
         }), 400
 
-    allowed_languages = ["hi", "en"]
-
-    if language not in allowed_languages:
+    if voice_type not in VOICES:
         return jsonify({
             "success": False,
-            "error": "Only Hindi and English are currently supported"
+            "error": "Voice must be male or female"
         }), 400
 
     try:
         filename = f"{uuid.uuid4().hex}.mp3"
         filepath = os.path.join(AUDIO_FOLDER, filename)
 
-        tts = gTTS(
-            text=text,
-            lang=language,
-            slow=False
-        )
+        async def generate_audio():
+            communicate = edge_tts.Communicate(
+                text,
+                VOICES[voice_type]
+            )
+            await communicate.save(filepath)
 
-        tts.save(filepath)
+        asyncio.run(generate_audio())
 
         return send_file(
             filepath,
