@@ -16,13 +16,27 @@ VOICES = {
     "male": "hi-IN-MadhurNeural"
 }
 
+SPEEDS = {
+    "slow": "-20%",
+    "normal": "+0%",
+    "fast": "+20%"
+}
+
+PITCHES = {
+    "low": "-10Hz",
+    "normal": "+0Hz",
+    "high": "+10Hz"
+}
+
 
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({
         "success": True,
         "message": "Text to Voice API is running",
-        "voices": ["female", "male"]
+        "voices": list(VOICES.keys()),
+        "speeds": list(SPEEDS.keys()),
+        "pitches": list(PITCHES.keys())
     })
 
 
@@ -38,7 +52,18 @@ def text_to_speech():
         }), 400
 
     text = str(data.get("text", "")).strip()
-    voice_type = str(data.get("voice", "female")).lower().strip()
+
+    voice_type = str(
+        data.get("voice", "female")
+    ).strip().lower()
+
+    speed_type = str(
+        data.get("speed", "normal")
+    ).strip().lower()
+
+    pitch_type = str(
+        data.get("pitch", "normal")
+    ).strip().lower()
 
     if not text:
         return jsonify({
@@ -55,21 +80,42 @@ def text_to_speech():
     if voice_type not in VOICES:
         return jsonify({
             "success": False,
-            "error": "Voice must be male or female"
+            "error": "Invalid voice"
         }), 400
 
+    if speed_type not in SPEEDS:
+        return jsonify({
+            "success": False,
+            "error": "Invalid speed"
+        }), 400
+
+    if pitch_type not in PITCHES:
+        return jsonify({
+            "success": False,
+            "error": "Invalid pitch"
+        }), 400
+
+    voice = VOICES[voice_type]
+    rate = SPEEDS[speed_type]
+    pitch = PITCHES[pitch_type]
+
+    filename = f"{uuid.uuid4().hex}.mp3"
+    filepath = os.path.join(AUDIO_FOLDER, filename)
+
+    async def generate_voice():
+
+        communicate = edge_tts.Communicate(
+            text=text,
+            voice=voice,
+            rate=rate,
+            pitch=pitch
+        )
+
+        await communicate.save(filepath)
+
     try:
-        filename = f"{uuid.uuid4().hex}.mp3"
-        filepath = os.path.join(AUDIO_FOLDER, filename)
 
-        async def generate_audio():
-            communicate = edge_tts.Communicate(
-                text,
-                VOICES[voice_type]
-            )
-            await communicate.save(filepath)
-
-        asyncio.run(generate_audio())
+        asyncio.run(generate_voice())
 
         return send_file(
             filepath,
@@ -79,6 +125,7 @@ def text_to_speech():
         )
 
     except Exception as e:
+
         return jsonify({
             "success": False,
             "error": str(e)
