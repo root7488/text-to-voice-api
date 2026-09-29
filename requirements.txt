@@ -1,4 +1,4 @@
 Flask
 flask-cors
-gTTS
+edge-tts
 gunicorn
