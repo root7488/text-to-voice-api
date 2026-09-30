@@ -28,6 +28,69 @@ PITCHES = {
     "high": "+10Hz"
 }
 
+# Emotion presets
+# These modify speaking rate, pitch and volume.
+EMOTIONS = {
+    "normal": {
+        "rate": "+0%",
+        "pitch": "+0Hz",
+        "volume": "+0%"
+    },
+    "happy": {
+        "rate": "+12%",
+        "pitch": "+8Hz",
+        "volume": "+5%"
+    },
+    "sad": {
+        "rate": "-15%",
+        "pitch": "-8Hz",
+        "volume": "-5%"
+    },
+    "angry": {
+        "rate": "+15%",
+        "pitch": "+5Hz",
+        "volume": "+10%"
+    },
+    "fear": {
+        "rate": "+8%",
+        "pitch": "+12Hz",
+        "volume": "-3%"
+    },
+    "excited": {
+        "rate": "+20%",
+        "pitch": "+10Hz",
+        "volume": "+8%"
+    }
+}
+
+
+def combine_percent(base_value, emotion_value):
+    base = int(base_value.replace("%", ""))
+    emotion = int(emotion_value.replace("%", ""))
+
+    total = base + emotion
+
+    if total > 50:
+        total = 50
+    elif total < -50:
+        total = -50
+
+    return f"{total:+d}%"
+
+
+def combine_pitch(base_value, emotion_value):
+    base = int(base_value.replace("Hz", ""))
+    emotion = int(emotion_value.replace("Hz", ""))
+
+    total = base + emotion
+
+    if total > 30:
+        total = 30
+    elif total < -30:
+        total = -30
+
+    return f"{total:+d}Hz"
+
 
 @app.route("/", methods=["GET"])
 def home():
@@ -36,7 +99,8 @@ def home():
         "message": "Text to Voice API is running",
         "voices": list(VOICES.keys()),
         "speeds": list(SPEEDS.keys()),
-        "pitches": list(PITCHES.keys())
+        "pitches": list(PITCHES.keys()),
+        "emotions": list(EMOTIONS.keys())
     })
 
 
@@ -52,18 +116,10 @@ def text_to_speech():
         }), 400
 
     text = str(data.get("text", "")).strip()
-
-    voice_type = str(
-        data.get("voice", "female")
-    ).strip().lower()
-
-    speed_type = str(
-        data.get("speed", "normal")
-    ).strip().lower()
-
-    pitch_type = str(
-        data.get("pitch", "normal")
-    ).strip().lower()
+    voice_type = str(data.get("voice", "female")).strip().lower()
+    speed_type = str(data.get("speed", "normal")).strip().lower()
+    pitch_type = str(data.get("pitch", "normal")).strip().lower()
+    emotion_type = str(data.get("emotion", "normal")).strip().lower()
 
     if not text:
         return jsonify({
@@ -95,9 +151,27 @@ def text_to_speech():
             "error": "Invalid pitch"
         }), 400
 
+    if emotion_type not in EMOTIONS:
+        return jsonify({
+            "success": False,
+            "error": "Invalid emotion"
+        }), 400
+
     voice = VOICES[voice_type]
-    rate = SPEEDS[speed_type]
-    pitch = PITCHES[pitch_type]
+
+    emotion = EMOTIONS[emotion_type]
+
+    rate = combine_percent(
+        SPEEDS[speed_type],
+        emotion["rate"]
+    )
+
+    pitch = combine_pitch(
+        PITCHES[pitch_type],
+        emotion["pitch"]
+    )
+
+    volume = emotion["volume"]
 
     filename = f"{uuid.uuid4().hex}.mp3"
     filepath = os.path.join(AUDIO_FOLDER, filename)
@@ -108,7 +182,8 @@ def text_to_speech():
             text=text,
             voice=voice,
             rate=rate,
-            pitch=pitch
+            pitch=pitch,
+            volume=volume
         )
 
         await communicate.save(filepath)
