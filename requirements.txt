@@ -4,3 +4,4 @@ edge-tts
 gunicorn
 pydub
 imageio-ffmpeg
+audioop-lts
