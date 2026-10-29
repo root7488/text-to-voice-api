@@ -19,6 +19,13 @@ AudioSegment.converter = imageio_ffmpeg.get_ffmpeg_exe()
 VOICES = {'female': 'hi-IN-SwaraNeural', 'male': 'hi-IN-MadhurNeural'}
 SPEEDS = {'slow': -20, 'normal': 0, 'fast': 20}
 PITCHES = {'low': -10, 'normal': 0, 'high': 10}
+# Style variants share the same two Hindi voice identities.
+VOICE_STYLES = {
+    'male1': ('male', 0, 0), 'male2': ('male', -8, -22), 'male3': ('male', 10, 12),
+    'female1': ('female', 0, 0), 'female2': ('female', -9, -8), 'female3': ('female', 9, 16),
+}
+ROLE_STYLES = {'पापा':'male2','पिता':'male2','दादा':'male2','नाना':'male2', 'बेटा':'male3','लड़का':'male3','भाई':'male3', 'मम्मी':'female1','माँ':'female1','मां':'female1','माता':'female1','दादी':'female2','नानी':'female2','बेटी':'female3','लड़की':'female3','बहन':'female3'}
+
 EMOTIONS = {
     'normal': {'rate': 0, 'pitch': 0, 'volume': 0},
     'happy': {'rate': 12, 'pitch': 8, 'volume': 5},
@@ -150,7 +157,7 @@ def story_chunks(text):
     return result
 
 
-async def synthesize_parts(parts, job_id, base_speed=0, base_pitch=0):
+async def synthesize_parts(parts, job_id, base_speed=0, base_pitch=0, default_style=None):
     final_audio = AudioSegment.empty()
     segment_files = []
     try:
@@ -162,12 +169,16 @@ async def synthesize_parts(parts, job_id, base_speed=0, base_pitch=0):
                 emotion = part['emotion']
                 settings = EMOTIONS.get(emotion, EMOTIONS['normal'])
                 # Subtle role variation; base Hindi voices remain Swara/Madhur.
-                role_pitch = -4 if part.get('speaker') in ('पापा', 'पिता', 'दादा') else (5 if part.get('speaker') in ('बेटा', 'लड़का') else 0)
+                style_key = part.get('style') or ROLE_STYLES.get(part.get('speaker')) or default_style or (part['gender'] + '1')
+                gender, style_rate, style_pitch = VOICE_STYLES.get(style_key, VOICE_STYLES[part['gender'] + '1'])
+                # Keep gender consistent with explicitly detected character.
+                if gender != part['gender']:
+                    gender, style_rate, style_pitch = VOICE_STYLES[part['gender'] + '1']
                 filepath = os.path.join(AUDIO_FOLDER, f'{job_id}_{index}.mp3')
                 segment_files.append(filepath)
-                await create_segment(sentence, VOICES[part['gender']],
-                                     format_rate(base_speed + settings['rate']),
-                                     format_pitch(base_pitch + settings['pitch'] + role_pitch),
+                await create_segment(sentence, VOICES[gender],
+                                     format_rate(clamp(base_speed + settings['rate'] + style_rate, -50, 50)),
+                                     format_pitch(clamp(base_pitch + settings['pitch'] + style_pitch, -50, 50)),
                                      format_volume(settings['volume']), filepath)
                 final_audio += AudioSegment.from_file(filepath, format='mp3')
                 final_audio += AudioSegment.silent(duration=250 if part.get('speaker') != 'narrator' else 180)
@@ -203,6 +214,9 @@ def text_to_speech():
     speed_type = str(data.get('speed', 'normal')).strip().lower()
     pitch_type = str(data.get('pitch', 'normal')).strip().lower()
     emotion_type = str(data.get('emotion', 'auto')).strip().lower()
+    style = str(data.get('voice_style', voice_type + '1')).strip().lower()
+    if style not in VOICE_STYLES or VOICE_STYLES[style][0] != voice_type:
+        return jsonify({'success': False, 'error': 'Invalid voice style'}), 400
     if not text:
         return jsonify({'success': False, 'error': 'Text is required'}), 400
     if len(text) > 5000:
@@ -219,7 +233,7 @@ def text_to_speech():
               'emotion': detect_emotion(sentence) if emotion_type == 'auto' else emotion_type,
               'speaker': 'narrator'} for sentence in split_sentences(text)]
     try:
-        output = asyncio.run(synthesize_parts(parts, uuid.uuid4().hex, SPEEDS[speed_type], PITCHES[pitch_type]))
+        output = asyncio.run(synthesize_parts(parts, uuid.uuid4().hex, SPEEDS[speed_type], PITCHES[pitch_type], style))
         return send_file(output, mimetype='audio/mpeg', as_attachment=False, download_name='voice.mp3')
     except Exception:
         app.logger.exception('TTS generation failed')
@@ -237,7 +251,15 @@ def story_to_speech():
     if len(text) > 5000:
         return jsonify({'success': False, 'error': 'Maximum 5000 characters allowed'}), 400
     try:
-        output = asyncio.run(synthesize_parts(story_chunks(text), uuid.uuid4().hex))
+        parts = story_chunks(text)
+        narrator_style = str(data.get('narrator_style', 'female1')).strip().lower()
+        if narrator_style not in VOICE_STYLES:
+            return jsonify({'success': False, 'error': 'Invalid narrator style'}), 400
+        for part in parts:
+            if part.get('speaker') == 'narrator':
+                part['style'] = narrator_style
+                part['gender'] = VOICE_STYLES[narrator_style][0]
+        output = asyncio.run(synthesize_parts(parts, uuid.uuid4().hex))
         return send_file(output, mimetype='audio/mpeg', as_attachment=False, download_name='story-voice.mp3')
     except Exception:
         app.logger.exception('Story voice generation failed')
