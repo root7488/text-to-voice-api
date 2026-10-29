@@ -26,6 +26,14 @@ VOICE_STYLES = {
 }
 ROLE_STYLES = {'पापा':'male2','पिता':'male2','दादा':'male2','नाना':'male2', 'बेटा':'male3','लड़का':'male3','भाई':'male3', 'मम्मी':'female1','माँ':'female1','मां':'female1','माता':'female1','दादी':'female2','नानी':'female2','बेटी':'female3','लड़की':'female3','बहन':'female3'}
 
+# Manual story controls: offsets in percentage points (rate) and Hz (pitch).
+# Accepted role labels match the explicit role detector in story_chunks().
+STORY_ROLES = ['पापा', 'मम्मी', 'बेटा', 'बेटी', 'दादा', 'दादी']
+ROLE_ALIASES = {'पिता':'पापा','डैडी':'पापा','डैड':'पापा','बाप':'पापा',
+                'माँ':'मम्मी','मां':'मम्मी','माता':'मम्मी',
+                'लड़का':'बेटा','भाई':'बेटा','लड़की':'बेटी','बहन':'बेटी',
+                'नाना':'दादा','नानी':'दादी'}
+
 EMOTIONS = {
     'normal': {'rate': 0, 'pitch': 0, 'volume': 0},
     'happy': {'rate': 12, 'pitch': 8, 'volume': 5},
@@ -177,8 +185,8 @@ async def synthesize_parts(parts, job_id, base_speed=0, base_pitch=0, default_st
                 filepath = os.path.join(AUDIO_FOLDER, f'{job_id}_{index}.mp3')
                 segment_files.append(filepath)
                 await create_segment(sentence, VOICES[gender],
-                                     format_rate(clamp(base_speed + settings['rate'] + style_rate, -50, 50)),
-                                     format_pitch(clamp(base_pitch + settings['pitch'] + style_pitch, -50, 50)),
+                                     format_rate(clamp(base_speed + settings['rate'] + style_rate + part.get('speed_offset', 0), -50, 50)),
+                                     format_pitch(clamp(base_pitch + settings['pitch'] + style_pitch + part.get('pitch_offset', 0), -30, 30)),
                                      format_volume(settings['volume']), filepath)
                 final_audio += AudioSegment.from_file(filepath, format='mp3')
                 final_audio += AudioSegment.silent(duration=250 if part.get('speaker') != 'narrator' else 180)
@@ -259,6 +267,29 @@ def story_to_speech():
             if part.get('speaker') == 'narrator':
                 part['style'] = narrator_style
                 part['gender'] = VOICE_STYLES[narrator_style][0]
+        manual = data.get('story_manual', False)
+        if not isinstance(manual, bool):
+            return jsonify({'success': False, 'error': 'Invalid story_manual'}), 400
+        role_settings = data.get('role_settings', {})
+        if not isinstance(role_settings, dict):
+            return jsonify({'success': False, 'error': 'Invalid role_settings'}), 400
+        if manual:
+            for part in parts:
+                role = ROLE_ALIASES.get(part.get('speaker'), part.get('speaker'))
+                if role not in STORY_ROLES:
+                    continue
+                setting = role_settings.get(role, {})
+                if not isinstance(setting, dict):
+                    return jsonify({'success': False, 'error': 'Invalid character setting'}), 400
+                try:
+                    rate = int(setting.get('speed', 0))
+                    tone = int(setting.get('pitch', 0))
+                except (ValueError, TypeError):
+                    return jsonify({'success': False, 'error': 'Pitch and speed must be numbers'}), 400
+                if not (-30 <= rate <= 30 and -20 <= tone <= 20):
+                    return jsonify({'success': False, 'error': 'Pitch or speed out of range'}), 400
+                part['speed_offset'] = rate
+                part['pitch_offset'] = tone
         output = asyncio.run(synthesize_parts(parts, uuid.uuid4().hex))
         return send_file(output, mimetype='audio/mpeg', as_attachment=False, download_name='story-voice.mp3')
     except Exception:
