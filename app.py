@@ -5,127 +5,50 @@ import asyncio
 import os
 import re
 import uuid
-
+import logging
 from pydub import AudioSegment
 import imageio_ffmpeg
 
 app = Flask(__name__)
 CORS(app)
-
-AUDIO_FOLDER = "audio"
+app.logger.setLevel(logging.INFO)
+AUDIO_FOLDER = 'audio'
 os.makedirs(AUDIO_FOLDER, exist_ok=True)
-
-# FFmpeg supplied by imageio-ffmpeg
 AudioSegment.converter = imageio_ffmpeg.get_ffmpeg_exe()
 
-
-VOICES = {
-    "female": "hi-IN-SwaraNeural",
-    "male": "hi-IN-MadhurNeural"
-}
-
-
-SPEEDS = {
-    "slow": -20,
-    "normal": 0,
-    "fast": 20
-}
-
-
-PITCHES = {
-    "low": -10,
-    "normal": 0,
-    "high": 10
-}
-
-
+VOICES = {'female': 'hi-IN-SwaraNeural', 'male': 'hi-IN-MadhurNeural'}
+SPEEDS = {'slow': -20, 'normal': 0, 'fast': 20}
+PITCHES = {'low': -10, 'normal': 0, 'high': 10}
 EMOTIONS = {
-
-    "normal": {
-        "rate": 0,
-        "pitch": 0,
-        "volume": 0
-    },
-
-    "happy": {
-        "rate": 12,
-        "pitch": 8,
-        "volume": 5
-    },
-
-    "sad": {
-        "rate": -15,
-        "pitch": -8,
-        "volume": -5
-    },
-
-    "angry": {
-        "rate": 15,
-        "pitch": 5,
-        "volume": 10
-    },
-
-    "fear": {
-        "rate": 8,
-        "pitch": 12,
-        "volume": -3
-    },
-
-    "excited": {
-        "rate": 20,
-        "pitch": 10,
-        "volume": 8
-    }
+    'normal': {'rate': 0, 'pitch': 0, 'volume': 0},
+    'happy': {'rate': 12, 'pitch': 8, 'volume': 5},
+    'sad': {'rate': -15, 'pitch': -8, 'volume': -5},
+    'angry': {'rate': 15, 'pitch': 5, 'volume': 10},
+    'fear': {'rate': 8, 'pitch': 12, 'volume': -3},
+    'excited': {'rate': 20, 'pitch': 10, 'volume': 8},
+    'loving': {'rate': -8, 'pitch': 5, 'volume': -2},
 }
-
-
-# -------------------------------------------------
-# AUTO EMOTION WORDS
-# -------------------------------------------------
-
 EMOTION_WORDS = {
-
-    "happy": [
-        "खुश", "खुशी", "मुस्कुर", "हँस", "हंस",
-        "प्यार", "प्रेम", "सुंदर", "खूबसूरत",
-        "आनंद", "बधाई", "सफल", "जीत",
-        "happy", "love", "smile", "beautiful",
-        "wonderful", "joy"
-    ],
-
-    "sad": [
-        "दुख", "दुःख", "दुखी", "उदास",
-        "रोना", "रोया", "रोई", "आँसू", "आंसू",
-        "अकेला", "अकेली", "मौत", "मर गया",
-        "खो दिया", "बिछड़",
-        "sad", "cry", "alone", "death",
-        "pain", "sorry"
-    ],
-
-    "angry": [
-        "गुस्सा", "क्रोध", "नफरत",
-        "चुप रहो", "बंद करो", "हिम्मत कैसे",
-        "ऐसा क्यों", "गलत किया",
-        "angry", "hate", "stop",
-        "shut up"
-    ],
-
-    "fear": [
-        "डर", "डरा", "डरी", "भय",
-        "खतरा", "बचाओ", "भूत",
-        "अचानक", "चीख", "कांप",
-        "fear", "scared", "danger",
-        "help", "ghost"
-    ],
-
-    "excited": [
-        "वाह", "कमाल", "शानदार",
-        "बहुत बढ़िया", "जल्दी", "यकीन नहीं",
-        "जीत गए", "मजा आ गया",
-        "wow", "amazing", "awesome",
-        "excited", "fantastic"
-    ]
+    'happy': ['खुश', 'खुशी', 'मुस्कुर', 'हँस', 'हंस', 'प्यार', 'प्रेम', 'सुंदर', 'खूबसूरत', 'आनंद', 'बधाई', 'सफल', 'जीत', 'happy', 'love', 'smile', 'beautiful', 'wonderful', 'joy'],
+    'sad': ['दुख', 'दुःख', 'दुखी', 'उदास', 'रोना', 'रोया', 'रोई', 'आँसू', 'आंसू', 'अकेला', 'अकेली', 'मौत', 'मर गया', 'खो दिया', 'बिछड़', 'sad', 'cry', 'alone', 'death', 'pain', 'sorry'],
+    'angry': ['गुस्सा', 'क्रोध', 'नफरत', 'चुप रहो', 'बंद करो', 'हिम्मत कैसे', 'ऐसा क्यों', 'गलत किया', 'angry', 'hate', 'stop', 'shut up'],
+    'fear': ['डर', 'डरा', 'डरी', 'भय', 'खतरा', 'बचाओ', 'भूत', 'अचानक', 'चीख', 'कांप', 'fear', 'scared', 'danger', 'help', 'ghost'],
+    'excited': ['वाह', 'कमाल', 'शानदार', 'बहुत बढ़िया', 'जल्दी', 'यकीन नहीं', 'जीत गए', 'मजा आ गया', 'wow', 'amazing', 'awesome', 'excited', 'fantastic'],
+    'loving': ['प्यार से', 'स्नेह से', 'दुलार', 'ममता', 'lovingly', 'gently'],
 }
+
+# Explicit family roles are more reliable than guessing gender from arbitrary names.
+ROLE_GENDERS = {
+    'पापा': 'male', 'पिता': 'male', 'बाप': 'male', 'डैडी': 'male', 'डैड': 'male',
+    'बेटा': 'male', 'लड़का': 'male', 'भाई': 'male', 'दादा': 'male', 'नाना': 'male',
+    'चाचा': 'male', 'मामा': 'male', 'अंकल': 'male', 'पति': 'male',
+    'मम्मी': 'female', 'माँ': 'female', 'मां': 'female', 'माता': 'female',
+    'बेटी': 'female', 'लड़की': 'female', 'बहन': 'female', 'दादी': 'female',
+    'नानी': 'female', 'चाची': 'female', 'मामी': 'female', 'आंटी': 'female', 'पत्नी': 'female',
+}
+ROLE_PATTERN = re.compile('|'.join(re.escape(x) for x in sorted(ROLE_GENDERS, key=len, reverse=True)))
+SPEECH_PATTERN = re.compile(r'(?:ने\s+)?(?:गुस्से\s+में\s+|डरते\s+हुए\s+|खुशी\s+से\s+|प्यार\s+से\s+|धीरे\s+से\s+|रोते\s+हुए\s+)?(?:कहा|बोला|बोली|पूछा|चिल्लाया|चिल्लाई|जवाब\s+दिया|समझाया|बताया|कहने\s+लगा|कहने\s+लगी)')
+QUOTES = re.compile(r'["“‘](.*?)["”’]', re.DOTALL)
 
 
 def clamp(value, minimum, maximum):
@@ -133,340 +56,193 @@ def clamp(value, minimum, maximum):
 
 
 def detect_emotion(sentence):
-
     text = sentence.lower()
-
-    scores = {
-        "happy": 0,
-        "sad": 0,
-        "angry": 0,
-        "fear": 0,
-        "excited": 0
-    }
-
+    scores = {key: 0 for key in EMOTION_WORDS}
     for emotion, words in EMOTION_WORDS.items():
-
         for word in words:
-
             if word in text:
                 scores[emotion] += 1
-
-    # Punctuation also gives useful clues
-    exclamation_count = sentence.count("!")
-
-    if exclamation_count > 0:
-        scores["excited"] += 1
-
-    if exclamation_count >= 2:
-        scores["excited"] += 1
-
-    # Choose strongest detected emotion
-    highest_emotion = max(scores, key=scores.get)
-
-    if scores[highest_emotion] == 0:
-        return "normal"
-
-    return highest_emotion
+    if sentence.count('!'):
+        scores['excited'] += 1
+    if sentence.count('!') >= 2:
+        scores['excited'] += 1
+    highest = max(scores, key=scores.get)
+    return highest if scores[highest] else 'normal'
 
 
 def split_sentences(text):
-
-    parts = re.split(
-        r'(?<=[।.!?])\s+|\n+',
-        text.strip()
-    )
-
-    return [
-        part.strip()
-        for part in parts
-        if part.strip()
-    ]
+    return [p.strip() for p in re.split(r'(?<=[।.!?])\s+|\n+', text.strip()) if p.strip()]
 
 
 def format_rate(value):
-    value = clamp(value, -50, 50)
-    return f"{value:+d}%"
+    return f'{clamp(value, -50, 50):+d}%'
 
 
 def format_pitch(value):
-    value = clamp(value, -30, 30)
-    return f"{value:+d}Hz"
+    return f'{clamp(value, -30, 30):+d}Hz'
 
 
 def format_volume(value):
-    value = clamp(value, -50, 50)
-    return f"{value:+d}%"
-
-
-async def create_segment(
-    text,
-    voice,
-    rate,
-    pitch,
-    volume,
-    filepath
-):
-
-    communicate = edge_tts.Communicate(
-        text=text,
-        voice=voice,
-        rate=rate,
-        pitch=pitch,
-        volume=volume
-    )
-
-    await communicate.save(filepath)
-
-
-@app.route("/", methods=["GET"])
-def home():
-
-    return jsonify({
-
-        "success": True,
-
-        "message": "Text to Voice API with Auto Emotion is running",
-
-        "voices": list(VOICES.keys()),
-
-        "speeds": list(SPEEDS.keys()),
-
-        "pitches": list(PITCHES.keys()),
-
-        "emotions": [
-            "auto",
-            "normal",
-            "happy",
-            "sad",
-            "angry",
-            "fear",
-            "excited"
-        ]
-
-    })
-
-
-@app.route("/tts", methods=["POST"])
-def text_to_speech():
-
-    data = request.get_json(silent=True)
-
-    if not data:
-
-        return jsonify({
-            "success": False,
-            "error": "JSON data is required"
-        }), 400
-
-
-    text = str(
-        data.get("text", "")
-    ).strip()
-
-
-    voice_type = str(
-        data.get("voice", "female")
-    ).strip().lower()
-
-
-    speed_type = str(
-        data.get("speed", "normal")
-    ).strip().lower()
-
-
-    pitch_type = str(
-        data.get("pitch", "normal")
-    ).strip().lower()
-
-
-    emotion_type = str(
-        data.get("emotion", "auto")
-    ).strip().lower()
-
-
-    if not text:
-
-        return jsonify({
-            "success": False,
-            "error": "Text is required"
-        }), 400
-
-
-    if len(text) > 5000:
-
-        return jsonify({
-            "success": False,
-            "error": "Maximum 5000 characters allowed"
-        }), 400
-
-
-    if voice_type not in VOICES:
-
-        return jsonify({
-            "success": False,
-            "error": "Invalid voice"
-        }), 400
-
-
-    if speed_type not in SPEEDS:
-
-        return jsonify({
-            "success": False,
-            "error": "Invalid speed"
-        }), 400
-
-
-    if pitch_type not in PITCHES:
-
-        return jsonify({
-            "success": False,
-            "error": "Invalid pitch"
-        }), 400
-
-
-    allowed_emotions = [
-        "auto",
-        "normal",
-        "happy",
-        "sad",
-        "angry",
-        "fear",
-        "excited"
-    ]
-
-
-    if emotion_type not in allowed_emotions:
-
-        return jsonify({
-            "success": False,
-            "error": "Invalid emotion"
-        }), 400
-
-
-    voice = VOICES[voice_type]
-
-    base_speed = SPEEDS[speed_type]
-    base_pitch = PITCHES[pitch_type]
-
-    job_id = uuid.uuid4().hex
-
-    final_file = os.path.join(
-        AUDIO_FOLDER,
-        f"{job_id}.mp3"
-    )
-
-
-    try:
-
-        sentences = split_sentences(text)
-
-        final_audio = AudioSegment.empty()
-
-        segment_files = []
-
-
-        for index, sentence in enumerate(sentences):
-
-            # AUTO detects each sentence separately
-            if emotion_type == "auto":
-
-                detected_emotion = detect_emotion(sentence)
-
+    return f'{clamp(value, -50, 50):+d}%'
+
+
+async def create_segment(text, voice, rate, pitch, volume, filepath):
+    await edge_tts.Communicate(text=text, voice=voice, rate=rate, pitch=pitch, volume=volume).save(filepath)
+
+
+def speaker_from_context(context):
+    # Prefer a role next to a speech verb, not a random earlier mention.
+    matches = list(ROLE_PATTERN.finditer(context))
+    if not matches:
+        return None
+    for match in reversed(matches):
+        after = context[match.end():]
+        if len(after) <= 65 and SPEECH_PATTERN.search(after):
+            return match.group(), ROLE_GENDERS[match.group()]
+    return None
+
+
+def story_chunks(text):
+    """Extract quoted dialogue; unquoted portions stay narrator text.
+    Supports 'पापा ने कहा, "..."' and '"...", पापा ने कहा' forms.
+    """
+    result = []
+    cursor = 0
+    matches = list(QUOTES.finditer(text))
+    for index, match in enumerate(matches):
+        before = text[cursor:match.start()]
+        after = text[match.end():matches[index + 1].start() if index + 1 < len(matches) else len(text)]
+        # Determine speaker using nearest speech attribution, before or after quote.
+        # Keep full narration text even when attribution is detected.
+        prefix = before[-130:]
+        speaker = speaker_from_context(prefix)
+        if speaker is None:
+            suffix = after[:90]
+            speaker = speaker_from_context(suffix)
+        if before.strip():
+            result.append({'text': before.strip(), 'gender': 'female', 'emotion': detect_emotion(before), 'speaker': 'narrator'})
+        dialogue = match.group(1).strip()
+        if dialogue:
+            gender = speaker[1] if speaker else 'female'
+            role = speaker[0] if speaker else 'narrator'
+            # Explicit attribution emotion takes priority over the dialogue's keyword score.
+            hint = prefix if speaker_from_context(prefix) else (after[:90] if speaker else '')
+            hinted_emotion = detect_emotion(hint)
+            emotion = hinted_emotion if hinted_emotion != 'normal' else detect_emotion(dialogue)
+            result.append({'text': dialogue, 'gender': gender, 'emotion': emotion, 'speaker': role})
+        cursor = match.end()
+    tail = text[cursor:]
+    if tail.strip():
+        result.append({'text': tail.strip(), 'gender': 'female', 'emotion': detect_emotion(tail), 'speaker': 'narrator'})
+    # No quote marks: support explicit 'पापा: ...' lines.
+    if not matches:
+        result = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            m = re.match(r'^([^:：]{1,25})\s*[:：]\s*(.+)$', line)
+            if m and m.group(1).strip() in ROLE_GENDERS:
+                role = m.group(1).strip()
+                result.append({'text': m.group(2).strip(), 'gender': ROLE_GENDERS[role], 'emotion': detect_emotion(m.group(2)), 'speaker': role})
             else:
-
-                detected_emotion = emotion_type
-
-
-            emotion_settings = EMOTIONS[detected_emotion]
+                result.append({'text': line, 'gender': 'female', 'emotion': detect_emotion(line), 'speaker': 'narrator'})
+    return result
 
 
-            final_rate = format_rate(
-                base_speed +
-                emotion_settings["rate"]
-            )
-
-
-            final_pitch = format_pitch(
-                base_pitch +
-                emotion_settings["pitch"]
-            )
-
-
-            final_volume = format_volume(
-                emotion_settings["volume"]
-            )
-
-
-            segment_file = os.path.join(
-                AUDIO_FOLDER,
-                f"{job_id}_{index}.mp3"
-            )
-
-            segment_files.append(segment_file)
-
-
-            asyncio.run(
-                create_segment(
-                    sentence,
-                    voice,
-                    final_rate,
-                    final_pitch,
-                    final_volume,
-                    segment_file
-                )
-            )
-
-
-            segment_audio = AudioSegment.from_file(
-                segment_file,
-                format="mp3"
-            )
-
-
-            final_audio += segment_audio
-
-            # Small natural pause between sentences
-            final_audio += AudioSegment.silent(
-                duration=180
-            )
-
-
-        final_audio.export(
-            final_file,
-            format="mp3",
-            bitrate="128k"
-        )
-
-
-        # Delete temporary sentence files
-        for segment_file in segment_files:
-
+async def synthesize_parts(parts, job_id, base_speed=0, base_pitch=0):
+    final_audio = AudioSegment.empty()
+    segment_files = []
+    try:
+        index = 0
+        for part in parts:
+            for sentence in split_sentences(part['text']):
+                if not sentence.strip():
+                    continue
+                emotion = part['emotion']
+                settings = EMOTIONS.get(emotion, EMOTIONS['normal'])
+                # Subtle role variation; base Hindi voices remain Swara/Madhur.
+                role_pitch = -4 if part.get('speaker') in ('पापा', 'पिता', 'दादा') else (5 if part.get('speaker') in ('बेटा', 'लड़का') else 0)
+                filepath = os.path.join(AUDIO_FOLDER, f'{job_id}_{index}.mp3')
+                segment_files.append(filepath)
+                await create_segment(sentence, VOICES[part['gender']],
+                                     format_rate(base_speed + settings['rate']),
+                                     format_pitch(base_pitch + settings['pitch'] + role_pitch),
+                                     format_volume(settings['volume']), filepath)
+                final_audio += AudioSegment.from_file(filepath, format='mp3')
+                final_audio += AudioSegment.silent(duration=250 if part.get('speaker') != 'narrator' else 180)
+                index += 1
+        if index == 0:
+            raise ValueError('No speakable text found')
+        output = os.path.join(AUDIO_FOLDER, f'{job_id}.mp3')
+        final_audio.export(output, format='mp3', bitrate='128k')
+        return output
+    finally:
+        for path in segment_files:
             try:
-                os.remove(segment_file)
-            except:
+                os.remove(path)
+            except OSError:
                 pass
 
 
-        return send_file(
-            final_file,
-            mimetype="audio/mpeg",
-            as_attachment=False,
-            download_name="voice.mp3"
-        )
+@app.route('/', methods=['GET'])
+def home():
+    return jsonify({'success': True, 'message': 'Text to Voice API with Auto Emotion and Story Voice is running',
+                    'voices': list(VOICES), 'speeds': list(SPEEDS), 'pitches': list(PITCHES),
+                    'emotions': ['auto', 'normal', 'happy', 'sad', 'angry', 'fear', 'excited'],
+                    'story_endpoint': '/story-tts'})
 
 
-    except Exception as e:
+@app.route('/tts', methods=['POST'])
+def text_to_speech():
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({'success': False, 'error': 'JSON data is required'}), 400
+    text = str(data.get('text', '')).strip()
+    voice_type = str(data.get('voice', 'female')).strip().lower()
+    speed_type = str(data.get('speed', 'normal')).strip().lower()
+    pitch_type = str(data.get('pitch', 'normal')).strip().lower()
+    emotion_type = str(data.get('emotion', 'auto')).strip().lower()
+    if not text:
+        return jsonify({'success': False, 'error': 'Text is required'}), 400
+    if len(text) > 5000:
+        return jsonify({'success': False, 'error': 'Maximum 5000 characters allowed'}), 400
+    if voice_type not in VOICES:
+        return jsonify({'success': False, 'error': 'Invalid voice'}), 400
+    if speed_type not in SPEEDS:
+        return jsonify({'success': False, 'error': 'Invalid speed'}), 400
+    if pitch_type not in PITCHES:
+        return jsonify({'success': False, 'error': 'Invalid pitch'}), 400
+    if emotion_type not in ['auto', 'normal', 'happy', 'sad', 'angry', 'fear', 'excited']:
+        return jsonify({'success': False, 'error': 'Invalid emotion'}), 400
+    parts = [{'text': sentence, 'gender': voice_type,
+              'emotion': detect_emotion(sentence) if emotion_type == 'auto' else emotion_type,
+              'speaker': 'narrator'} for sentence in split_sentences(text)]
+    try:
+        output = asyncio.run(synthesize_parts(parts, uuid.uuid4().hex, SPEEDS[speed_type], PITCHES[pitch_type]))
+        return send_file(output, mimetype='audio/mpeg', as_attachment=False, download_name='voice.mp3')
+    except Exception:
+        app.logger.exception('TTS generation failed')
+        return jsonify({'success': False, 'error': 'Voice generation failed'}), 500
 
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
+
+@app.route('/story-tts', methods=['POST'])
+def story_to_speech():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'success': False, 'error': 'JSON data is required'}), 400
+    text = str(data.get('text', '')).strip()
+    if not text:
+        return jsonify({'success': False, 'error': 'Text is required'}), 400
+    if len(text) > 5000:
+        return jsonify({'success': False, 'error': 'Maximum 5000 characters allowed'}), 400
+    try:
+        output = asyncio.run(synthesize_parts(story_chunks(text), uuid.uuid4().hex))
+        return send_file(output, mimetype='audio/mpeg', as_attachment=False, download_name='story-voice.mp3')
+    except Exception:
+        app.logger.exception('Story voice generation failed')
+        return jsonify({'success': False, 'error': 'Story voice generation failed'}), 500
 
 
-if __name__ == "__main__":
-
-    app.run(
-        host="0.0.0.0",
-        port=5000,
-        debug=True
-    )
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=False)
