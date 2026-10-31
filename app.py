@@ -12,6 +12,7 @@ import imageio_ffmpeg
 app = Flask(__name__)
 CORS(app)
 app.logger.setLevel(logging.INFO)
+MAX_CHARACTERS = 10000
 AUDIO_FOLDER = 'audio'
 os.makedirs(AUDIO_FOLDER, exist_ok=True)
 AudioSegment.converter = imageio_ffmpeg.get_ffmpeg_exe()
@@ -86,7 +87,36 @@ def detect_emotion(sentence):
 
 
 def split_sentences(text):
-    return [p.strip() for p in re.split(r'(?<=[।.!?])\s+|\n+', text.strip()) if p.strip()]
+    """Split long inputs at natural punctuation and safe word boundaries."""
+    chunks = []
+    for paragraph in re.split(r'\n+', text.strip()):
+        for sentence in re.split(r'(?<=[।.!?])\s*', paragraph):
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+            # A long paragraph without full stops still needs manageable TTS requests.
+            while len(sentence) > 650:
+                candidates = [sentence.rfind(mark, 0, 650) for mark in (' ', ',', '،', ';', '؛', '،')]
+                boundary = max(candidates)
+                if boundary < 250:
+                    boundary = 650
+                chunks.append(sentence[:boundary].strip())
+                sentence = sentence[boundary:].strip()
+            if sentence:
+                chunks.append(sentence)
+    return chunks
+
+
+def natural_pause(sentence, speaker):
+    """Add measured silence after each synthesized phrase."""
+    end = sentence.rstrip()
+    if end.endswith(('?', '!', '؟')):
+        return 360
+    if end.endswith(('।', '.')):
+        return 300 if speaker != 'narrator' else 340
+    if end.endswith((',', '،', ';', '؛', ':')):
+        return 170
+    return 220
 
 
 def format_rate(value):
@@ -189,7 +219,7 @@ async def synthesize_parts(parts, job_id, base_speed=0, base_pitch=0, default_st
                                      format_pitch(clamp(base_pitch + settings['pitch'] + style_pitch + part.get('pitch_offset', 0), -30, 30)),
                                      format_volume(settings['volume']), filepath)
                 final_audio += AudioSegment.from_file(filepath, format='mp3')
-                final_audio += AudioSegment.silent(duration=250 if part.get('speaker') != 'narrator' else 180)
+                final_audio += AudioSegment.silent(duration=natural_pause(sentence, part.get('speaker')))
                 index += 1
         if index == 0:
             raise ValueError('No speakable text found')
@@ -227,8 +257,8 @@ def text_to_speech():
         return jsonify({'success': False, 'error': 'Invalid voice style'}), 400
     if not text:
         return jsonify({'success': False, 'error': 'Text is required'}), 400
-    if len(text) > 5000:
-        return jsonify({'success': False, 'error': 'Maximum 5000 characters allowed'}), 400
+    if len(text) > MAX_CHARACTERS:
+        return jsonify({'success': False, 'error': 'Maximum 10000 characters allowed'}), 400
     if voice_type not in VOICES:
         return jsonify({'success': False, 'error': 'Invalid voice'}), 400
     if speed_type not in SPEEDS:
@@ -256,8 +286,8 @@ def story_to_speech():
     text = str(data.get('text', '')).strip()
     if not text:
         return jsonify({'success': False, 'error': 'Text is required'}), 400
-    if len(text) > 5000:
-        return jsonify({'success': False, 'error': 'Maximum 5000 characters allowed'}), 400
+    if len(text) > MAX_CHARACTERS:
+        return jsonify({'success': False, 'error': 'Maximum 10000 characters allowed'}), 400
     try:
         parts = story_chunks(text)
         narrator_style = str(data.get('narrator_style', 'female1')).strip().lower()
