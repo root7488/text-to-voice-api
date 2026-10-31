@@ -96,15 +96,22 @@ def split_sentences(text):
             if not sentence:
                 continue
             # A long paragraph without full stops still needs manageable TTS requests.
-            while len(sentence) > 650:
-                candidates = [sentence.rfind(mark, 0, 650) for mark in (' ', ',', '،', ';', '؛', '،')]
+                        while len(sentence) > 650:
+                candidates = [
+                    sentence.rfind(mark, 0, 650)
+                    for mark in (' ', ',', '،', ';', '؛')
+                ]
                 boundary = max(candidates)
+
                 if boundary < 250:
                     boundary = 650
+
                 chunks.append(sentence[:boundary].strip())
                 sentence = sentence[boundary:].strip()
-            if sentence:
+
+            if sentence and re.search(r'[\w\u0900-\u097F]', sentence):
                 chunks.append(sentence)
+
     return chunks
 
 
