@@ -88,28 +88,40 @@ def detect_emotion(sentence):
 
 
 def split_sentences(text):
-    """Split long inputs at natural punctuation and safe word boundaries."""
+    """Split text into natural sentences and safe TTS chunks."""
     chunks = []
+
     for paragraph in re.split(r'\n+', text.strip()):
         for sentence in re.split(r'(?<=[।.!?])\s*', paragraph):
             sentence = sentence.strip()
+
             if not sentence:
                 continue
-            # A long paragraph without full stops still needs manageable TTS requests.
-                        while len(sentence) > 650:
+
+            # Skip punctuation-only segments.
+            if not re.search(r'\w', sentence):
+                continue
+
+            # Split long sentences into smaller parts.
+            while len(sentence) > 650:
                 candidates = [
                     sentence.rfind(mark, 0, 650)
                     for mark in (' ', ',', '،', ';', '؛')
                 ]
+
                 boundary = max(candidates)
 
                 if boundary < 250:
                     boundary = 650
 
-                chunks.append(sentence[:boundary].strip())
+                part = sentence[:boundary].strip()
+
+                if re.search(r'\w', part):
+                    chunks.append(part)
+
                 sentence = sentence[boundary:].strip()
 
-            if sentence and re.search(r'[\w\u0900-\u097F]', sentence):
+            if sentence and re.search(r'\w', sentence):
                 chunks.append(sentence)
 
     return chunks
