@@ -329,3 +329,50 @@ def story_to_speech():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False)
+@app.route("/test-edge", methods=["GET"])
+def test_edge():
+    import tempfile
+    import os
+    import asyncio
+    import edge_tts
+
+    path = None
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            suffix=".mp3", delete=False
+        ) as temp:
+            path = temp.name
+
+        async def generate():
+            voice = edge_tts.Communicate(
+                text="नमस्कार दोस्तों, यह एक टेस्ट आवाज है।",
+                voice="hi-IN-MadhurNeural",
+                rate="+0%",
+                pitch="+0Hz"
+            )
+            await voice.save(path)
+
+        asyncio.run(generate())
+
+        size = os.path.getsize(path)
+
+        return jsonify({
+            "status": "success",
+            "message": "Edge-TTS generated audio",
+            "bytes": size,
+            "edge_tts_version": "7.3.1"
+        })
+
+    except Exception as e:
+        app.logger.exception("Edge-TTS diagnostic failed")
+
+        return jsonify({
+            "status": "error",
+            "error_type": type(e).__name__,
+            "message": str(e)
+        }), 500
+
+    finally:
+        if path and os.path.exists(path):
+            os.remove(path)
