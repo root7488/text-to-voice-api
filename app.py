@@ -87,53 +87,59 @@ def detect_emotion(sentence):
     return highest if scores[highest] else 'normal'
 
 
-def split_sentences(text):
-    """Split text into natural sentences and safe TTS chunks."""
-    chunks = []
+def clean_tts_text(text):
+    """Remove visual formatting without removing spoken Hindi/English content."""
+    text = re.sub(r'(?m)^\s{0,3}#{1,6}\s*', '', text)
+    text = re.sub(r'\*{1,3}([^*\n]+)\*{1,3}', r'\1', text)
+    text = re.sub(r'(?m)^\s*[-*]\s+', '', text)
+    text = re.sub(r'\.{2,}|…+', '। ', text)
+    # Keep letters, combining marks, numbers, quotes and spoken punctuation;
+    # discard emoji and other pictographs without needing extra dependencies.
+    text = ''.join(ch for ch in text if not (0x1F000 <= ord(ch) <= 0x1FAFF or 0x2600 <= ord(ch) <= 0x27BF))
+    text = re.sub(r'[ \t]+', ' ', text)
+    return text.strip()
 
-    for paragraph in re.split(r'\n+', text.strip()):
+
+def has_spoken_content(text):
+    """Require a letter or number; Devanagari combining marks alone do not count."""
+    return any(ch.isalnum() for ch in text)
+
+
+def split_sentences(text):
+    """Split on natural boundaries and never synthesize isolated punctuation."""
+    text = clean_tts_text(text)
+    chunks = []
+    for paragraph in re.split(r'\n+', text):
         for sentence in re.split(r'(?<=[।.!?])\s*', paragraph):
             sentence = sentence.strip()
-
-            if not sentence:
+            if not has_spoken_content(sentence):
                 continue
-
-            # Skip punctuation-only segments.
-            if not re.search(r'\w', sentence):
-                continue
-
-            # Split long sentences into smaller parts.
             while len(sentence) > 650:
-                candidates = [
-                    sentence.rfind(mark, 0, 650)
-                    for mark in (' ', ',', '،', ';', '؛')
-                ]
-
+                candidates = [sentence.rfind(mark, 0, 650)
+                              for mark in (' ', ',', '،', ';', '؛')]
                 boundary = max(candidates)
-
                 if boundary < 250:
                     boundary = 650
-
-                part = sentence[:boundary].strip()
-
-                if re.search(r'\w', part):
-                    chunks.append(part)
-
+                piece = sentence[:boundary].strip()
+                if has_spoken_content(piece):
+                    chunks.append(piece)
                 sentence = sentence[boundary:].strip()
-
-            if sentence and re.search(r'\w', sentence):
-                chunks.append(sentence)
-
+            if has_spoken_content(sentence):
+                # Join extremely short fragments to previous chunk when possible.
+                if len(sentence) <= 3 and chunks and len(chunks[-1]) + len(sentence) < 650:
+                    chunks[-1] += ' ' + sentence
+                else:
+                    chunks.append(sentence)
     return chunks
 
 
 def natural_pause(sentence, speaker):
-    """Add measured silence after each synthesized phrase."""
+    """Small additional silence; Edge-TTS may already pause naturally."""
     end = sentence.rstrip()
     if end.endswith(('?', '!', '؟')):
         return 200
     if end.endswith(('।', '.')):
-       return 150
+        return 150
     if end.endswith((',', '،', ';', '؛', ':')):
         return 80
     return 50
@@ -305,6 +311,7 @@ def text_to_speech():
         return jsonify({'success': False, 'error': 'Invalid pitch'}), 400
     if emotion_type not in ['auto', 'normal', 'happy', 'sad', 'angry', 'fear', 'excited']:
         return jsonify({'success': False, 'error': 'Invalid emotion'}), 400
+    text = clean_tts_text(text)
     parts = [{'text': sentence, 'gender': voice_type,
               'emotion': detect_emotion(sentence) if emotion_type == 'auto' else emotion_type,
               'speaker': 'narrator'} for sentence in split_sentences(text)]
@@ -327,7 +334,7 @@ def story_to_speech():
     if len(text) > MAX_CHARACTERS:
         return jsonify({'success': False, 'error': 'Maximum 10000 characters allowed'}), 400
     try:
-        parts = story_chunks(text)
+        parts = story_chunks(clean_tts_text(text))
         narrator_style = str(data.get('narrator_style', 'female1')).strip().lower()
         if narrator_style not in VOICE_STYLES:
             return jsonify({'success': False, 'error': 'Invalid narrator style'}), 400
@@ -364,6 +371,31 @@ def story_to_speech():
         app.logger.exception('Story voice generation failed')
         return jsonify({'success': False, 'error': 'Story voice generation failed'}), 500
 
+
+
+@app.route('/test-edge', methods=['GET'])
+def test_edge():
+    """Fixed, non-user-controlled synthesis diagnostic."""
+    import tempfile
+    path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp:
+            path = temp.name
+
+        async def generate():
+            await edge_tts.Communicate(
+                text='नमस्कार दोस्तों, यह एक टेस्ट आवाज है।',
+                voice='hi-IN-MadhurNeural', rate='+0%', pitch='+0Hz'
+            ).save(path)
+
+        asyncio.run(generate())
+        return jsonify({'status': 'success', 'bytes': os.path.getsize(path)})
+    except Exception as exc:
+        app.logger.exception('Edge-TTS diagnostic failed')
+        return jsonify({'status': 'error', 'error_type': type(exc).__name__}), 500
+    finally:
+        if path and os.path.exists(path):
+            os.remove(path)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False)
