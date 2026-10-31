@@ -6,6 +6,7 @@ import os
 import re
 import uuid
 import logging
+from edge_tts.exceptions import NoAudioReceived
 from pydub import AudioSegment
 import imageio_ffmpeg
 
@@ -132,7 +133,25 @@ def format_volume(value):
 
 
 async def create_segment(text, voice, rate, pitch, volume, filepath):
-    await edge_tts.Communicate(text=text, voice=voice, rate=rate, pitch=pitch, volume=volume).save(filepath)
+    """Retry transient empty audio; use neutral controls as a final fallback."""
+    attempts = [(rate, pitch, volume), (rate, pitch, volume), ('+0%', '+0Hz', '+0%')]
+    for attempt, (r, p, v) in enumerate(attempts, start=1):
+        try:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+            app.logger.info('TTS segment attempt=%s voice=%s rate=%s pitch=%s volume=%s chars=%s',
+                            attempt, voice, r, p, v, len(text))
+            await edge_tts.Communicate(text=text, voice=voice, rate=r, pitch=p, volume=v).save(filepath)
+            if os.path.getsize(filepath) == 0:
+                raise NoAudioReceived('Empty audio file')
+            if attempt == 3:
+                app.logger.warning('TTS succeeded with neutral controls; original pitch/speed not preserved')
+            return
+        except NoAudioReceived:
+            app.logger.warning('NoAudioReceived on attempt %s/3 voice=%s', attempt, voice)
+            if attempt == 3:
+                raise
+            await asyncio.sleep(attempt)
 
 
 def speaker_from_context(context):
@@ -329,50 +348,3 @@ def story_to_speech():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False)
-@app.route("/test-edge", methods=["GET"])
-def test_edge():
-    import tempfile
-    import os
-    import asyncio
-    import edge_tts
-
-    path = None
-
-    try:
-        with tempfile.NamedTemporaryFile(
-            suffix=".mp3", delete=False
-        ) as temp:
-            path = temp.name
-
-        async def generate():
-            voice = edge_tts.Communicate(
-                text="नमस्कार दोस्तों, यह एक टेस्ट आवाज है।",
-                voice="hi-IN-MadhurNeural",
-                rate="+0%",
-                pitch="+0Hz"
-            )
-            await voice.save(path)
-
-        asyncio.run(generate())
-
-        size = os.path.getsize(path)
-
-        return jsonify({
-            "status": "success",
-            "message": "Edge-TTS generated audio",
-            "bytes": size,
-            "edge_tts_version": "7.3.1"
-        })
-
-    except Exception as e:
-        app.logger.exception("Edge-TTS diagnostic failed")
-
-        return jsonify({
-            "status": "error",
-            "error_type": type(e).__name__,
-            "message": str(e)
-        }), 500
-
-    finally:
-        if path and os.path.exists(path):
-            os.remove(path)
