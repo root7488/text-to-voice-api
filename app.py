@@ -112,12 +112,12 @@ def natural_pause(sentence, speaker):
     """Add measured silence after each synthesized phrase."""
     end = sentence.rstrip()
     if end.endswith(('?', '!', '؟')):
-        return 360
+        return 200
     if end.endswith(('।', '.')):
-        return 300 if speaker != 'narrator' else 340
+       return 150
     if end.endswith((',', '،', ';', '؛', ':')):
-        return 170
-    return 220
+        return 80
+    return 50
 
 
 def format_rate(value):
