@@ -493,5 +493,63 @@ def gemini_tts():
         app.logger.exception('Gemini voice request failed')
         return jsonify({'success': False, 'error': 'Gemini voice generation failed'}), 502
 
+
+
+@app.route('/gemini-merge', methods=['POST'])
+def gemini_merge():
+    """Merge previously generated MP3 parts; does not call Gemini."""
+    import base64
+    import tempfile
+    import subprocess
+    import hmac
+    from flask import Response
+    secret = os.environ.get('GEMINI_PROXY_SECRET', '')
+    if not secret or not hmac.compare_digest(request.headers.get('X-TTV-Secret', ''), secret):
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+    if request.content_length is not None and request.content_length > 24 * 1024 * 1024:
+        return jsonify({'success': False, 'error': 'Audio too large'}), 413
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or not isinstance(data.get('parts'), list):
+        return jsonify({'success': False, 'error': 'Invalid parts'}), 400
+    parts = data['parts']
+    if not 1 <= len(parts) <= 15:
+        return jsonify({'success': False, 'error': 'Invalid number of parts'}), 400
+    try:
+        decoded = []
+        for part in parts:
+            if not isinstance(part, str):
+                raise ValueError('Invalid audio part')
+            chunk = base64.b64decode(part, validate=True)
+            if not (100 <= len(chunk) <= 3 * 1024 * 1024) or not chunk.startswith(b'ID3') and not chunk[:2] in (b'\xff\xfb', b'\xff\xf3', b'\xff\xf2'):
+                raise ValueError('Invalid MP3 part')
+            decoded.append(chunk)
+        if sum(map(len, decoded)) > 16 * 1024 * 1024:
+            return jsonify({'success': False, 'error': 'Audio exceeds merge limit'}), 413
+        with tempfile.TemporaryDirectory() as tempdir:
+            paths = []
+            for i, chunk in enumerate(decoded):
+                p = os.path.join(tempdir, 'part-%02d.mp3' % i)
+                with open(p, 'wb') as f:
+                    f.write(chunk)
+                paths.append(p)
+            listing = os.path.join(tempdir, 'parts.txt')
+            with open(listing, 'w', encoding='utf-8') as f:
+                for p in paths:
+                    f.write("file '%s'\n" % p)
+            output = os.path.join(tempdir, 'combined.mp3')
+            subprocess.run([AudioSegment.converter, '-nostdin', '-loglevel', 'error', '-y',
+                '-f', 'concat', '-safe', '0', '-i', listing, '-codec:a', 'libmp3lame',
+                '-b:a', '128k', output], check=True, timeout=120)
+            with open(output, 'rb') as f:
+                audio = f.read()
+        return Response(audio, mimetype='audio/mpeg', headers={
+            'Content-Disposition': 'attachment; filename="gemini-combined.mp3"',
+            'Cache-Control': 'no-store'})
+    except (ValueError, base64.binascii.Error):
+        return jsonify({'success': False, 'error': 'Invalid audio data'}), 400
+    except Exception:
+        app.logger.exception('Gemini audio merge failed')
+        return jsonify({'success': False, 'error': 'Audio merge failed'}), 502
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False)
