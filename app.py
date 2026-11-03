@@ -397,5 +397,101 @@ def test_edge():
         if path and os.path.exists(path):
             os.remove(path)
 
+
+
+# Gemini voice: isolated from legacy /tts and /story-tts routes.
+# Configure GEMINI_API_KEY, GEMINI_TTS_MODEL and GEMINI_PROXY_SECRET in Render.
+@app.route('/gemini-tts', methods=['POST'])
+def gemini_tts():
+    import base64
+    import subprocess
+    import tempfile
+    import urllib.request
+    import urllib.error
+    import wave
+    from flask import Response
+
+    secret = os.environ.get('GEMINI_PROXY_SECRET', '')
+    if not secret or not __import__('hmac').compare_digest(
+        request.headers.get('X-TTV-Secret', ''), secret
+    ):
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+
+    api_key = os.environ.get('GEMINI_API_KEY', '')
+    model = os.environ.get('GEMINI_TTS_MODEL', '')
+    if not api_key or not model:
+        return jsonify({'success': False, 'error': 'Gemini API not configured'}), 503
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'success': False, 'error': 'Invalid JSON'}), 400
+    spoken = clean_tts_text(str(data.get('text', '')))
+    if not spoken or not has_spoken_content(spoken) or len(spoken) > 1500:
+        return jsonify({'success': False, 'error': 'Enter 1–1500 characters'}), 400
+
+    voice = str(data.get('voice', 'Charon'))
+    if voice not in ('Charon', 'Kore', 'Puck', 'Aoede'):
+        return jsonify({'success': False, 'error': 'Invalid voice'}), 400
+    mood = str(data.get('style', 'documentary'))
+    directions = {
+        'documentary': 'Speak in natural Hindi with cinematic documentary narration, thoughtful pauses, expressive but believable delivery.',
+        'story': 'Tell this Hindi story naturally with warm emotional variation and human-like pacing.',
+        'happy': 'Speak in Hindi with gentle happiness and a genuine smile in the voice.',
+        'sad': 'Speak in Hindi with restrained sadness and empathetic pauses.',
+        'suspense': 'Speak in Hindi with subtle suspense and dramatic, natural pauses.',
+        'neutral': 'Speak in clear, natural conversational Hindi.'
+    }
+    if mood not in directions:
+        return jsonify({'success': False, 'error': 'Invalid style'}), 400
+
+    payload = {
+        'contents': [{'parts': [{'text': directions[mood] + '\n\nText to speak verbatim:\n' + spoken}]}],
+        'generationConfig': {
+            'responseModalities': ['AUDIO'],
+            'speechConfig': {'voiceConfig': {'prebuiltVoiceConfig': {'voiceName': voice}}}
+        }
+    }
+    url = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent'
+    req = urllib.request.Request(url, data=__import__('json').dumps(payload).encode('utf-8'),
+        headers={'Content-Type': 'application/json', 'x-goog-api-key': api_key}, method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=110) as res:
+            answer = __import__('json').load(res)
+        parts = answer.get('candidates', [{}])[0].get('content', {}).get('parts', [])
+        audio = next((p['inlineData'] for p in parts if 'inlineData' in p), None)
+        if not audio:
+            return jsonify({'success': False, 'error': 'No audio returned by Gemini'}), 502
+        mime = audio.get('mimeType', '')
+        if not mime.startswith('audio/'):
+            return jsonify({'success': False, 'error': 'Unexpected Gemini audio format'}), 502
+        pcm = base64.b64decode(audio['data'], validate=True)
+        # Gemini speech commonly returns 24 kHz 16-bit mono PCM.
+        match = re.search(r'rate=(\d+)', mime)
+        rate = int(match.group(1)) if match else 24000
+        if not (8000 <= rate <= 96000) or len(pcm) % 2:
+            return jsonify({'success': False, 'error': 'Invalid PCM audio'}), 502
+        with tempfile.TemporaryDirectory() as tempdir:
+            wav_path = os.path.join(tempdir, 'speech.wav')
+            mp3_path = os.path.join(tempdir, 'speech.mp3')
+            with wave.open(wav_path, 'wb') as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(rate)
+                wav.writeframes(pcm)
+            subprocess.run([AudioSegment.converter, '-nostdin', '-loglevel', 'error', '-y',
+                '-i', wav_path, '-codec:a', 'libmp3lame', '-b:a', '128k', mp3_path],
+                check=True, timeout=60)
+            mp3 = open(mp3_path, 'rb').read()
+        return Response(mp3, mimetype='audio/mpeg', headers={
+            'Content-Disposition': 'attachment; filename="gemini-voice.mp3"',
+            'Cache-Control': 'no-store'})
+    except urllib.error.HTTPError as exc:
+        # Avoid logging API keys, text, or provider response bodies.
+        app.logger.warning('Gemini API returned HTTP %s', exc.code)
+        return jsonify({'success': False, 'error': 'Gemini API HTTP ' + str(exc.code) + '. Check model, quota and billing.'}), 502
+    except Exception:
+        app.logger.exception('Gemini voice request failed')
+        return jsonify({'success': False, 'error': 'Gemini voice generation failed'}), 502
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False)
